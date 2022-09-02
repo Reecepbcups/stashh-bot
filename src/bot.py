@@ -1,17 +1,21 @@
-import httpx, string, random, time, os
+import httpx, time, os, json
+
 from dotenv import load_dotenv
 from utils.notifications import discord_notification
 
+# load env variables
 load_dotenv()
 
+# Default endpoints
 API = "https://stashh.io/nfts/get"
 API_COLLECTION_DATA = "https://stashh.io/collection/fetch"
 
+# Load global needs from env / the .env file
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK", "")
 CONTRACT = os.getenv("CONTRACT", "secret1dvd46mkjr8s4cl2czv03h9y82heeefc0hzlrat")
 LISTING_LINK = os.getenv("LISTING_LINK", "https://stashh.io/asset/racn/RACOON%20{ID}")
 
-
+# query headers
 headers = {    
     "User-Agent": os.getenv("USER_AGENT", ""),
     "accept": "application/jsopyhonn, text/plain, */*",
@@ -45,17 +49,34 @@ nft_stats = {
     "address": os.getenv("ADDRESS", "racn")
 }
 
-# TODO: floor price & stuffs
+filename = "past_sold.json"
+past_sold = {}
+def load_nft_times_from_file() -> dict:
+    global past_sold
+    if not os.path.exists(filename):
+        with open(filename, 'w') as f:
+            json.dump({}, f)
+    with open(filename, 'r') as f:
+        past_sold = json.load(f)       
+    return past_sold
+def _save_nfts() -> None:
+    if len(past_sold) > 0:
+        with open(filename, 'w') as f:
+            json.dump(past_sold, f)
+def update_nft_sell_date(nft_id: str, new_sold_time: int):
+    global past_sold
+    past_sold[nft_id] = new_sold_time
+    _save_nfts()
+
+
 def epoch_to_human(epoch_seconds):
-    # 2022-09-01 14:18:05
-    ## TODO: for discord, get time in their local timezone with the <t:thing>
+    # 2022-09-01 14:18:05    
     tz = time.tzname[time.daylight]
     return time.strftime('%Y-%m-%d %Hh %Mm', time.localtime(epoch_seconds)) + f" {tz}"
 
 def get_nft_stats():
     response = httpx.post(API_COLLECTION_DATA, json=nft_stats, headers=headers)
-    data = response.json()
-    print(data.keys())
+    data = response.json()  #; print(data.keys())
 
     avg_dollar = f"${round(data['avg_dollar'], 2)}"
     total_volume = data['collection']['total_volume']
@@ -71,7 +92,7 @@ def get_nft_stats():
         "total_volume": total_volume
     }
 
-def get_latested_sales():
+def get_latest_sales():
     # make a post requests to API with params
     response = httpx.post(API, json=recently_sold, headers=headers)
     data = response.json()['nfts']
@@ -79,6 +100,7 @@ def get_latested_sales():
 
     for nft in data:
         name = nft['name']
+        _id = nft['id']
         num_likes = len(nft['likes'])
         rank = nft['rank']
         coll_name = nft['coll_name']
@@ -87,15 +109,22 @@ def get_latested_sales():
         # lat sold
         scrt_price = nft['last_sold']['price']
         dollar_price = nft['last_sold']['dollar_price']
-        timestamp = int(nft['last_sold']['timestamp'])/1_000
+        timestamp = int(int(nft['last_sold']['timestamp'])/1_000)
         # human_timestamp = epoch_to_human(timestamp)
         url = nft['thumbnail'][0]['url']
+        # print(f"COLLECTION: {coll_name} -> {name} Rank #{rank} likes:{num_likes} scrt:{scrt_price} ${dollar_price}. Image: {url}")
 
-        print(f"COLLECTION: {coll_name} -> {name} Rank #{rank} likes:{num_likes} scrt:{scrt_price} ${dollar_price}. Image: {url}")
+        # check if the _id is in the past_sold dict, if so, check that the timestamp is newer. If it is not, continue to next check
+        if _id in past_sold:
+            # print(past_sold, _id)
+            # print(past_sold[_id], timestamp)
+            if timestamp <= past_sold[_id]:
+                continue
+            
+        print(f"new sell! {_id} @ {timestamp}")
+        update_nft_sell_date(_id, timestamp)   
+        stats = get_nft_stats()   
 
-        stats = get_nft_stats()                
-
-        # print(nft.keys())        
         discord_notification(
             webook_url=WEBHOOK_URL,
             title=f"PURCHASE:\n{name} Rank #{rank}", 
@@ -105,14 +134,16 @@ def get_latested_sales():
                 "LINK": [listing_link, True],
                 "SCRT": [f"{scrt_price}\t(${dollar_price})", False],                
                 "LIKES": [f"+{num_likes}", False],
-                "FLOOR": [f"${stats['floor']}", False],
-                "TIME SOLD": [f"<t:{int(timestamp)}>", False],
+                "FLOOR / AVG $": [f"Floor: ${stats['floor']}\nAverage: {stats['avg_dollar']}", False],
+                "TIME SOLD": [f"<t:{int(timestamp)}>\n(<t:{int(timestamp)}:R>)", False],
             }, 
             thumbnail=os.getenv("THUMBNAIL_IMAGE", ""), 
             image=url, 
             footerText=""
-        )
-        input("\n\n\n")
+        )        
+        time.sleep(2) # discord rate limit        
 
 
-get_latested_sales()
+if __name__ == "__main__":
+    load_nft_times_from_file() # load past sold NFTs
+    get_latest_sales()
