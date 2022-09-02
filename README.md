@@ -1,4 +1,5 @@
-# racoon-supply-stashh-bot
+# stashh-bot
+(build initially for racoon-supply)
 
 Issues? Contact Reece#3370 or create an issue in the repo.
 
