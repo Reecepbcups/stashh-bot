@@ -97,8 +97,8 @@ def get_latest_sales():
     response = httpx.post(API, json=recently_sold, headers=headers)
     data = response.json()['nfts']
 
-
-    for nft in data:
+    # Loop through NFTs return values, revered so that it goes oldest to newest.
+    for nft in reversed(data):
         name = nft['name']
         _id = nft['id']
         num_likes = len(nft['likes'])
@@ -120,10 +120,9 @@ def get_latest_sales():
             # print(past_sold[_id], timestamp)
             if timestamp <= past_sold[_id]:
                 continue
-            
-        print(f"new sell! {_id} @ {timestamp}")
+                    
         update_nft_sell_date(_id, timestamp)   
-        stats = get_nft_stats()   
+        stats = get_nft_stats()        
 
         discord_notification(
             webook_url=WEBHOOK_URL,
@@ -141,7 +140,7 @@ def get_latest_sales():
             image=url, 
             footerText=""
         )        
-        time.sleep(2) # discord rate limit        
+        time.sleep(1.3) # discord rate limit        
 
 
 if __name__ == "__main__":
