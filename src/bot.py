@@ -2,6 +2,7 @@ import httpx, time, os, json
 
 from dotenv import load_dotenv
 from utils.notifications import discord_notification
+# from utils.time_convert import epoch_to_human
 
 # load env variables
 load_dotenv()
@@ -12,8 +13,12 @@ API_COLLECTION_DATA = "https://stashh.io/collection/fetch"
 
 # Load global needs from env / the .env file
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK", "")
+WEBHOOK_URL_AUCTIONS_SALES = os.getenv("DISCORD_WEBHOOK_AUCTIONS_SALES", "")
 CONTRACT = os.getenv("CONTRACT", "secret1dvd46mkjr8s4cl2czv03h9y82heeefc0hzlrat")
 LISTING_LINK = os.getenv("LISTING_LINK", "https://stashh.io/asset/racn/RACOON%20{ID}")
+
+NOTIFICATIONS = os.getenv("NOTIFICATIONS", "true").lower().startswith("t")
+print(f"Notifications: {NOTIFICATIONS}")
 
 # query headers
 headers = {    
@@ -47,10 +52,21 @@ recently_sold = {
     }
 }
 
+# recently listed
+recently_listed = {
+    "params": {
+        "limit":200,
+        "skip":0,
+        "collections":[CONTRACT],
+        "is_badge":False, "sort_by":"price", "ascending":True, "is_spam":False, "query_id":"IRvSUyDggMGdibGCi78M"
+    }
+}
+
 nft_stats = {
     "address": os.getenv("ADDRESS", "racn")
 }
 
+## ------------------ File storage ------------------ ##
 filename = "past_sold.json"
 past_sold = {}
 def load_nft_times_from_file() -> dict:
@@ -74,11 +90,30 @@ def update_nft_sell_date(nft_id: str, new_sold_time: int, scrt_amt: float, dolla
     }
     _save_nfts()
 
+newly_listed_filename = "newly_listed.json"
+newly_listed = {}
+def load_past_listed_from_file() -> dict:
+    global newly_listed
+    if not os.path.exists(newly_listed_filename):
+        with open(newly_listed_filename, 'w') as f:
+            json.dump({}, f)
+    with open(newly_listed_filename, 'r') as f:
+        newly_listed = json.load(f)       
+    return newly_listed
+def _save_listed() -> None:
+    if len(newly_listed) > 0:
+        with open(newly_listed_filename, 'w') as f:
+            json.dump(newly_listed, f)
+def update_nft_new_listing(nft_id: str, listed_time: int, is_auction: bool):
+    global newly_listed
+    newly_listed[nft_id] = {
+        "timestamp": listed_time, # epoch in seconds
+        "is_auction": is_auction
+    }
+    _save_listed()
+## ----------------- /File storage ------------------ ##
 
-def epoch_to_human(epoch_seconds):
-    # 2022-09-01 14:18:05    
-    tz = time.tzname[time.daylight]
-    return time.strftime('%Y-%m-%d %Hh %Mm', time.localtime(epoch_seconds)) + f" {tz}"
+
 
 def get_nft_stats():
     response = httpx.post(API_COLLECTION_DATA, json=nft_stats, headers=headers)
@@ -126,11 +161,11 @@ def get_latest_sales():
         if _id in past_sold:
             if timestamp <= past_sold[_id]["timestamp"]:
                 continue
+        else:
+            update_nft_sell_date(_id, timestamp, scrt_price, dollar_price)
             
         # if is first run, run this here then comment out. Set limit for most recent sold to 500
         # update_nft_sell_date(_id, timestamp, scrt_price, dollar_price); continue        
-        
-
         lastScrtAmt = float(past_sold[_id]['scrt_amt'])
         lastDollarAmt = float(past_sold[_id]['dollar_amt'])
 
@@ -142,27 +177,154 @@ def get_latest_sales():
 
         sign = "+" if scrt_difference > 0 else "" # auto does negative        
 
-        discord_notification(
-            webook_url=WEBHOOK_URL,
-            title=f"PURCHASE:\n{name} Rank #{rank}", 
-            description=f"", 
-            color=os.getenv("COLOR", "ffffff").replace("#", ""), 
-            values={
-                "LINK": [listing_link, True],
-                "SCRT": [f"{scrt_price}\t(${dollar_price})", False],
-                "Change Since Last Sale": [f"{sign}{scrt_difference}SCRT ({sign}{scrt_percent}%)\n{sign}${dollar_difference} ({sign}{dollar_percent}%)", False],
-                "LIKES": [f"+{num_likes}", False],
-                "FLOOR / AVG $": [f"Floor: ${stats['floor']}\nAverage: {stats['avg_dollar']}", False],
-                "TIME SOLD": [f"<t:{int(timestamp)}>\n(<t:{int(timestamp)}:R>)", False],
-            }, 
-            thumbnail=os.getenv("THUMBNAIL_IMAGE", ""), 
-            image=url, 
-            footerText=""
-        )
+        if NOTIFICATIONS:
+            discord_notification(
+                webook_url=WEBHOOK_URL,
+                title=f"PURCHASE:\n{name} Rank #{rank}", 
+                description=f"", 
+                color=os.getenv("COLOR", "ffffff").replace("#", ""), 
+                values={
+                    "LINK": [listing_link, True],
+                    "SCRT": [f"{scrt_price}\t(${dollar_price})", False],
+                    "Change Since Last Sale": [f"{sign}{scrt_difference}SCRT ({sign}{scrt_percent}%)\n{sign}${dollar_difference} ({sign}{dollar_percent}%)", False],
+                    "LIKES": [f"+{num_likes}", False],
+                    "FLOOR / AVG $": [f"Floor: ${stats['floor']}\nAverage: {stats['avg_dollar']}", False],
+                    "TIME SOLD": [f"<t:{int(timestamp)}>\n(<t:{int(timestamp)}:R>)", False],
+                }, 
+                thumbnail=os.getenv("THUMBNAIL_IMAGE", ""), 
+                image=url, 
+                footerText=""
+            )            
+            time.sleep(1.3) # discord rate limit
+
         update_nft_sell_date(_id, timestamp, scrt_price, dollar_price)
-        time.sleep(1.3) # discord rate limit
+
+
+# TODO: clean up this rats nest, move to its own class probably
+def get_newest_listings():
+    response = httpx.post(API, json=recently_listed, headers=headers)
+    data = response.json()
+    # total_for_sale = data['total']    
+
+    for nft in data['nfts']:
+        name = str(nft['name'])
+        
+        last_sold = nft['last_sold'] # none if none
+        if last_sold is not None:
+            last_sold_time = int(int(nft['last_sold']['timestamp'])/1_000)
+            last_sold_scrt = float(nft['last_sold']['price'])
+            last_sold_dollar = float(nft['last_sold']['dollar_price'])
+
+        on_sale = bool(nft['listing']['on_sale']) # boolean
+
+        listing_link = LISTING_LINK.replace("{ID}", nft['id'].split(" ")[1])
+        
+        dollar_price = float(nft['listing']['dollar_price']) # price in USD
+        scrt_price = float(nft['listing']['price']) # price in SCRT
+        listed_on = int(int(nft['listing']['listed_on'])/1_000) # epoch in seconds
+        closes_at = int(int(nft['listing']['closes_at'])/1_000) # if this is for sale, it is ~100 years out
+
+        url = str(nft['thumbnail'][0]['url'])
+        rank = int(nft['rank'])
+
+        is_auction = nft['listing']['is_auction'] # boolean
+        buy_now_price = float(nft['listing']['buy_now_price']) # price in SCRT
+        has_bids = bool(nft['listing']['has_bids']) # boolean
+                
+
+        is_whitelisted = False        
+        if 'is_whitelisted' in nft['listing']:
+            is_whitelisted = nft['listing']['is_whitelisted'] # boolean
+
+        num_bids = 0
+        if num_bids in nft['listing']:
+            num_bids = int(nft['listing']['num_bids'])
+
+        # if not is_auction: # TODO: debuging only just to get an auction
+        #     continue
+
+        # print(f"Name: {name} Rank: {rank} On Sale: {on_sale} Listed On: {listed_on} Closes At: {closes_at} Price: {scrt_price}SCRT ${dollar_price} Image: {url}")
+        # print(f"is_auction {is_auction} buy_now_price {buy_now_price} has_bids {has_bids} is_whitelisted {is_whitelisted} num_bids {num_bids}")        
+        # input()
+
+        # if rac has been sold before, ensure its a newer sell than last time.
+        if name in newly_listed:
+            if listed_on <= newly_listed[name]["timestamp"]:
+                continue  
+        else:
+            update_nft_new_listing(nft['id'], listed_on, is_auction)                  
+
+        if is_whitelisted: # if its whitelisted, other can buy so dont announce it.
+            update_nft_new_listing(nft['id'], listed_on, is_auction)
+            continue
+
+        # if its an auction, give auction data
+        if is_auction:
+            auction_values = {
+                "LINK": [listing_link, True],
+                "Listed at": [f"<t:{int(listed_on)}> (<t:{int(listed_on)}:R>)", False],
+                "Current Bid Price": [f"{scrt_price}\t(${dollar_price})", False],
+            }            
+            if buy_now_price > 0:
+                auction_values["Buy Now:"] = [f"{buy_now_price} SCRT", False]
+            if has_bids > 0:
+                auction_values["Bids:"] = [f"{num_bids}", False]
+            if last_sold is not None:
+                auction_values["Last Sold: "] = [f"<t:{int(last_sold_time)}>\nFor: {last_sold_scrt}SCRT (${last_sold_dollar})", True]                                
+
+            if NOTIFICATIONS:
+                discord_notification(
+                    webook_url=WEBHOOK_URL_AUCTIONS_SALES,
+                    title=f"AUCTION:\n{name} Rank #{rank}", 
+                    description=f"Bid on this NFT before the time runs out!", 
+                    color=os.getenv("AUCTION_COLOR", "ffffff").replace("#", ""), 
+                    values=auction_values, 
+                    thumbnail=os.getenv("THUMBNAIL_IMAGE", ""), 
+                    image=url, 
+                    footerText=""
+                )
+                time.sleep(1.2)
+        else:
+            forsale_values = {
+                "LINK": [listing_link, True],
+                "Price": [f"{scrt_price}SCRT\t(${dollar_price})", False],             
+            }  
+            if last_sold is not None:
+                last_sold = _getLastSoldData(last_sold)                
+                forsale_values["Last Sold Price"] = [f"{last_sold_scrt} (${last_sold_dollar})", True]   
+                forsale_values['Last Sold Time'] = [f"<t:{last_sold['timestamp']}>\n(<t:{last_sold['timestamp']}:R>)", False]            
+            
+            if NOTIFICATIONS:
+                discord_notification(
+                    webook_url=WEBHOOK_URL_AUCTIONS_SALES,
+                    title=f"FOR SALE:\n{name} Rank #{rank}", 
+                    description=f"This RAC is available for direct purchase by anyone.", 
+                    color=os.getenv("SALE_COLOR", "ffffff").replace("#", ""), 
+                    values=forsale_values, 
+                    thumbnail=os.getenv("THUMBNAIL_IMAGE", ""), 
+                    image=url, 
+                    footerText=""
+                )
+                time.sleep(1.2)
+
+        update_nft_new_listing(nft['id'], listed_on, is_auction)
+
+
+def _getLastSoldData(last_sold: dict):    
+    return {
+        "byName": last_sold.get('byName', ""), 
+        "by": last_sold.get('by', ""), 
+        "price": last_sold.get('price', -1), 
+        "usd": last_sold.get('dollar_price', -1), 
+        "timestamp": int(int(last_sold.get("timestamp", -1))/1_000)
+    }
 
 
 if __name__ == "__main__":
     load_nft_times_from_file() # load past sold NFTs
-    get_latest_sales()
+    load_past_listed_from_file() # load listings & see which are new listings
+
+    if len(WEBHOOK_URL) > 0:
+        get_latest_sales()
+    if len(WEBHOOK_URL_AUCTIONS_SALES) > 0:
+        get_newest_listings()
