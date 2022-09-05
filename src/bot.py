@@ -40,7 +40,8 @@ headers = {
 # recently sold nfts
 recently_sold = {
     "params":  {
-        "limit":24,"skip":0,
+        "limit":50,
+        "skip":0,
         "collections":[CONTRACT],
         "is_badge":False,"sort_by":"sold_date","ascending":False,"is_spam":False,"query_id":"Y6FkHqytBfuH9eqaAaRD"
     }
@@ -102,6 +103,8 @@ def get_latest_sales():
     response = httpx.post(API, json=recently_sold, headers=headers)
     data = response.json()['nfts']
 
+    stats = get_nft_stats()
+
     # Loop through NFTs return values, revered so that it goes oldest to newest.
     for nft in reversed(data):
         name = nft['name']
@@ -123,8 +126,10 @@ def get_latest_sales():
         if _id in past_sold:
             if timestamp <= past_sold[_id]["timestamp"]:
                 continue
-                    
-        stats = get_nft_stats()
+            
+        # if is first run, run this here then comment out. Set limit for most recent sold to 500
+        # update_nft_sell_date(_id, timestamp, scrt_price, dollar_price); continue        
+        
 
         lastScrtAmt = float(past_sold[_id]['scrt_amt'])
         lastDollarAmt = float(past_sold[_id]['dollar_amt'])
@@ -135,10 +140,7 @@ def get_latest_sales():
         scrt_percent = round((scrt_difference / lastScrtAmt) * 100, 2)
         dollar_percent = round((dollar_difference / lastDollarAmt) * 100, 2)
 
-        sign = "+" if scrt_difference > 0 else "" # auto does negative
-
-        # update data AFTER we get the past stats
-        update_nft_sell_date(_id, timestamp, scrt_price, dollar_price) 
+        sign = "+" if scrt_difference > 0 else "" # auto does negative        
 
         discord_notification(
             webook_url=WEBHOOK_URL,
@@ -156,8 +158,9 @@ def get_latest_sales():
             thumbnail=os.getenv("THUMBNAIL_IMAGE", ""), 
             image=url, 
             footerText=""
-        )        
-        time.sleep(1.3) # discord rate limit        
+        )
+        update_nft_sell_date(_id, timestamp, scrt_price, dollar_price)
+        time.sleep(1.3) # discord rate limit
 
 
 if __name__ == "__main__":
