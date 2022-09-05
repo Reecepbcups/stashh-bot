@@ -45,6 +45,7 @@ recently_sold = {
         "is_badge":False,"sort_by":"sold_date","ascending":False,"is_spam":False,"query_id":"Y6FkHqytBfuH9eqaAaRD"
     }
 }
+
 nft_stats = {
     "address": os.getenv("ADDRESS", "racn")
 }
@@ -63,9 +64,13 @@ def _save_nfts() -> None:
     if len(past_sold) > 0:
         with open(filename, 'w') as f:
             json.dump(past_sold, f)
-def update_nft_sell_date(nft_id: str, new_sold_time: int):
+def update_nft_sell_date(nft_id: str, new_sold_time: int, scrt_amt: float, dollar_amt: float):
     global past_sold
-    past_sold[nft_id] = new_sold_time
+    past_sold[nft_id] = {
+        "timestamp": new_sold_time, # epoch in seconds
+        "scrt_amt": scrt_amt,
+        "dollar_amt": dollar_amt
+    }
     _save_nfts()
 
 
@@ -116,13 +121,24 @@ def get_latest_sales():
 
         # check if the _id is in the past_sold dict, if so, check that the timestamp is newer. If it is not, continue to next check
         if _id in past_sold:
-            # print(past_sold, _id)
-            # print(past_sold[_id], timestamp)
-            if timestamp <= past_sold[_id]:
+            if timestamp <= past_sold[_id]["timestamp"]:
                 continue
                     
-        update_nft_sell_date(_id, timestamp)   
-        stats = get_nft_stats()        
+        stats = get_nft_stats()
+
+        lastScrtAmt = float(past_sold[_id]['scrt_amt'])
+        lastDollarAmt = float(past_sold[_id]['dollar_amt'])
+
+        scrt_difference = round(float(scrt_price) - lastScrtAmt, 2)
+        dollar_difference = round(float(dollar_price) - lastDollarAmt, 2)
+
+        scrt_percent = round((scrt_difference / lastScrtAmt) * 100, 2)
+        dollar_percent = round((dollar_difference / lastDollarAmt) * 100, 2)
+
+        sign = "+" if scrt_difference > 0 else "" # auto does negative
+
+        # update data AFTER we get the past stats
+        update_nft_sell_date(_id, timestamp, scrt_price, dollar_price) 
 
         discord_notification(
             webook_url=WEBHOOK_URL,
@@ -131,7 +147,8 @@ def get_latest_sales():
             color=os.getenv("COLOR", "ffffff").replace("#", ""), 
             values={
                 "LINK": [listing_link, True],
-                "SCRT": [f"{scrt_price}\t(${dollar_price})", False],                
+                "SCRT": [f"{scrt_price}\t(${dollar_price})", False],
+                "Change Since Last Sale": [f"{sign}{scrt_difference}SCRT ({sign}{scrt_percent}%)\n{sign}${dollar_difference} ({sign}{dollar_percent}%)", False],
                 "LIKES": [f"+{num_likes}", False],
                 "FLOOR / AVG $": [f"Floor: ${stats['floor']}\nAverage: {stats['avg_dollar']}", False],
                 "TIME SOLD": [f"<t:{int(timestamp)}>\n(<t:{int(timestamp)}:R>)", False],
