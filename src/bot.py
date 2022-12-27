@@ -143,8 +143,7 @@ def get_latest_sales():
     # Loop through NFTs return values, revered so that it goes oldest to newest.
     for nft in reversed(data):
         name = nft['name']
-        _id = nft['id']
-        num_likes = len(nft.get('likes', ""))
+        _id = nft['id']        
         rank = nft['rank']
         coll_name = nft['coll_name']
         listing_link = LISTING_LINK.replace("{ID}", nft['id'].split(" ")[1])
@@ -155,7 +154,7 @@ def get_latest_sales():
         timestamp = int(int(nft['last_sold']['timestamp'])/1_000)
         # human_timestamp = epoch_to_human(timestamp)
         url = nft['thumbnail'][0]['url']
-        # print(f"COLLECTION: {coll_name} -> {name} Rank #{rank} likes:{num_likes} scrt:{scrt_price} ${dollar_price}. Image: {url}")
+        # print(f"COLLECTION: {coll_name} -> {name} Rank #{rank} scrt:{scrt_price} ${dollar_price}. Image: {url}")
 
         # check if the _id is in the past_sold dict, if so, check that the timestamp is newer. If it is not, continue to next check
         if _id in past_sold:
@@ -186,8 +185,7 @@ def get_latest_sales():
                 values={
                     "LINK": [listing_link, True],
                     "SCRT": [f"{scrt_price}\t(${dollar_price})", False],
-                    "Change Since Last Sale": [f"{sign}{scrt_difference}SCRT ({sign}{scrt_percent}%)\n{sign}${dollar_difference} ({sign}{dollar_percent}%)", False],
-                    "LIKES": [f"+{num_likes}", False],
+                    "Change Since Last Sale": [f"{sign}{scrt_difference}SCRT ({sign}{scrt_percent}%)\n{sign}${dollar_difference} ({sign}{dollar_percent}%)", False],                    
                     "FLOOR / AVG $": [f"Floor: ${stats['floor']}\nAverage: {stats['avg_dollar']}", False],
                     "TIME SOLD": [f"<t:{int(timestamp)}>\n(<t:{int(timestamp)}:R>)", False],
                 }, 
