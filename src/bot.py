@@ -144,7 +144,7 @@ def get_latest_sales():
     for nft in reversed(data):
         name = nft['name']
         _id = nft['id']
-        num_likes = len(nft['likes'])
+        num_likes = len(nft.get('likes', ""))
         rank = nft['rank']
         coll_name = nft['coll_name']
         listing_link = LISTING_LINK.replace("{ID}", nft['id'].split(" ")[1])
